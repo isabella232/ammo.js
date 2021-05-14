@@ -21,6 +21,10 @@ class btDynamicsWorld;
 
 class btVehicleTuning;
 
+// Mackey Kinard
+class btConvexHullShape;
+#include "BulletCollision/CollisionDispatch/btCollisionWorld.h" 
+
 ///rayCast vehicle, very special constraint that turn a rigidbody into a vehicle.
 class btRaycastVehicle : public btActionInterface
 {
@@ -80,6 +84,13 @@ public:
 
 	virtual ~btRaycastVehicle() ;
 
+	// Mackey Kinard
+	bool m_enableMultiRaycast;
+	int m_minimumWheelContacts;
+	btScalar m_trackConnectionAccel;
+	btScalar m_smoothFlyingImpulse;
+	btScalar m_stabilizingForce;
+	btScalar m_maxImpulseForce;
 
 	///btActionInterface interface
 	virtual void updateAction( btCollisionWorld* collisionWorld, btScalar step)
@@ -94,7 +105,9 @@ public:
 			
 	const btTransform& getChassisWorldTransform() const;
 	
-	btScalar rayCast(btWheelInfo& wheel);
+	//btScalar rayCast(btWheelInfo& wheel);
+	// Mackey Kinard (Note: Raycast Fraction - Helps Collision Mesh Gaps)
+	btScalar rayCast(btWheelInfo& wheel, float fraction = 1.0f);
 
 	virtual void updateVehicle(btScalar step);
 	
@@ -127,9 +140,10 @@ public:
 
 	btWheelInfo&	getWheelInfo(int index);
 
-	void	updateWheelTransformsWS(btWheelInfo& wheel , bool interpolatedTransform = true);
+	//void	updateWheelTransformsWS(btWheelInfo& wheel , bool interpolatedTransform = true);
+	// Mackey Kinard (Note: Raycast Fraction - Helps Collision Mesh Gaps)
+	void updateWheelTransformsWS(btWheelInfo& wheel , bool interpolatedTransform = true, float raycastFraction = 1.0f);
 
-	
 	void setBrake(btScalar brake,int wheelIndex);
 
 	void	setPitchControl(btScalar pitch)
@@ -231,6 +245,119 @@ public:
 
 };
 
+////////////////////////////////////////////////////
+// Mackey Kinard - Smooth Vehicle Raycaster
+////////////////////////////////////////////////////
+
+// Write a ray result callback that saves the shapePart and triangleIndex
+struct SmoothRayCastResultCallback : public btCollisionWorld::RayResultCallback
+{
+	SmoothRayCastResultCallback(const btVector3 &rayFromWorld, const btVector3 &rayToWorld) : m_rayFromWorld(rayFromWorld), m_rayToWorld(rayToWorld) { }
+
+	//used to calculate hitPointWorld from hitFraction
+	btVector3 m_rayFromWorld; 
+	btVector3 m_rayToWorld;
+
+	btVector3 m_hitNormalWorld;
+	btVector3 m_hitPointWorld;
+
+	int m_shapePart;
+	int m_triangleIndex;
+
+	virtual btScalar addSingleResult(btCollisionWorld::LocalRayResult& rayResult, bool normalInWorldSpace)
+	{
+		btAssert(rayResult.m_hitFraction <= m_closestHitFraction);
+
+		if (rayResult.m_localShapeInfo)
+		{
+			m_shapePart = rayResult.m_localShapeInfo->m_shapePart;
+			m_triangleIndex = rayResult.m_localShapeInfo->m_triangleIndex;
+		}
+
+		m_collisionObject = rayResult.m_collisionObject;
+		m_closestHitFraction = rayResult.m_hitFraction;
+		m_hitPointWorld.setInterpolate3(m_rayFromWorld, m_rayToWorld, rayResult.m_hitFraction);
+		if (normalInWorldSpace)
+		{
+			m_hitNormalWorld = rayResult.m_hitNormalLocal;
+		}
+		else
+		{
+			m_hitNormalWorld = m_collisionObject->getWorldTransform().getBasis() * rayResult.m_hitNormalLocal; // transform normal into worldspace
+		}
+		return m_closestHitFraction;
+	}
+};
+
+// Write a convex result callback that saves the shapePart and triangleIndex
+struct	SmoothShapeCastResultCallback : public btCollisionWorld::ConvexResultCallback
+{
+	SmoothShapeCastResultCallback(const btVector3&	convexFromWorld,const btVector3& convexToWorld) : m_convexFromWorld(convexFromWorld), m_convexToWorld(convexToWorld), m_hitCollisionObject(0) { }
+
+	//used to calculate hitPointWorld from hitFraction
+	btVector3	m_convexFromWorld;
+	btVector3	m_convexToWorld;
+
+	btVector3	m_hitNormalWorld;
+	btVector3	m_hitPointWorld;
+	const btCollisionObject*	m_hitCollisionObject;
+	
+	int m_shapePart;
+	int m_triangleIndex;
+
+	virtual	btScalar addSingleResult(btCollisionWorld::LocalConvexResult& convexResult, bool normalInWorldSpace)
+	{
+		btAssert(convexResult.m_hitFraction <= m_closestHitFraction);
+
+		if (convexResult.m_localShapeInfo)
+		{
+			m_shapePart = convexResult.m_localShapeInfo->m_shapePart;
+			m_triangleIndex = convexResult.m_localShapeInfo->m_triangleIndex;
+		}
+
+		m_hitCollisionObject = convexResult.m_hitCollisionObject;
+		m_closestHitFraction = convexResult.m_hitFraction;
+		m_hitPointWorld.setInterpolate3(m_convexFromWorld, m_convexToWorld, convexResult.m_hitFraction);
+		if (normalInWorldSpace)
+		{
+			m_hitNormalWorld = convexResult.m_hitNormalLocal;
+		}
+		else
+		{
+			m_hitNormalWorld = m_hitCollisionObject->getWorldTransform().getBasis() * convexResult.m_hitNormalLocal; // transform normal into worldspace
+		}
+
+		return m_closestHitFraction;
+	}
+};
+
+class btSmoothVehicleRaycaster : public btVehicleRaycaster
+{
+	btDynamicsWorld*	m_dynamicsWorld;
+public:
+	short int m_collisionFilterGroup;
+	short int m_collisionFilterMask;
+	bool m_interpolateNormals;
+	bool m_shapeTestingMode;
+	int m_testPointCount;
+	btScalar m_sweepPenetration;
+	btScalar m_shapeTestingSize;
+
+	btSmoothVehicleRaycaster(btDynamicsWorld* world) : m_dynamicsWorld(world)
+	{
+		m_interpolateNormals = false;
+		m_shapeTestingMode = false;
+		m_testPointCount = 32; 					// shall be enough, but can be higher
+		m_shapeTestingSize = btScalar(0.2f); 	// should be half of wheel radius
+		m_sweepPenetration = btScalar(0.0f); 	// default to zero
+		m_collisionFilterGroup = btBroadphaseProxy::DefaultFilter;
+		m_collisionFilterMask = btBroadphaseProxy::StaticFilter;
+	}
+
+	virtual void* castRay(const btVector3& from,const btVector3& to, btVehicleRaycasterResult& result);
+	void* performLineTest(const btVector3& from,const btVector3& to, btVehicleRaycasterResult& result);
+	void* performShapeTest(const btVector3& from,const btVector3& to, btVehicleRaycasterResult& result);
+};
 
 #endif //BT_RAYCASTVEHICLE_H
 

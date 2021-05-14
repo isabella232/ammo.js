@@ -44,6 +44,10 @@ protected:
 
 	const btCollisionObjectWrapper* m_body0Wrap;
 	const btCollisionObjectWrapper* m_body1Wrap;
+/////////////////////////////////////////////////
+// Mackey Kinard
+/////////////////////////////////////////////////
+public:	
 	int	m_partId0;
 	int m_partId1;
 	int m_index0;

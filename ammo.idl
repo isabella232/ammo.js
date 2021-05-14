@@ -216,6 +216,8 @@ interface btManifoldPoint {
 
 [Prefix="btCollisionWorld::"]
 interface ContactResultCallback {
+  attribute short m_collisionFilterGroup; // Mackey Kinard (Babylon)
+  attribute short m_collisionFilterMask;  // Mackey Kinard (Babylon)
   float addSingleResult([Ref] btManifoldPoint cp, [Const] btCollisionObjectWrapper colObj0Wrap, long partId0, long index0, [Const] btCollisionObjectWrapper colObj1Wrap, long partId1, long index1);
 };
 
@@ -267,6 +269,7 @@ interface btCollisionShape {
   void calculateLocalInertia(float mass, [Ref] btVector3 inertia);
   void setMargin(float margin);
   float getMargin();
+  [Const] long getShapeType(); // Mackey Kinard (Babylon)
 };
 
 interface btConvexShape {
@@ -435,6 +438,23 @@ interface btTriangleMesh {
  [Ref] btIndexedMeshArray getIndexedMeshArray();
 };
 btTriangleMesh implements btStridingMeshInterface;
+
+// Mackey Kinard (Babylon)
+interface btSmoothTriangleMesh {
+  void btSmoothTriangleMesh();
+  void addTriangle([Const, Ref] btVector3 vertex0, [Const, Ref] btVector3 vertex1, [Const, Ref] btVector3 vertex2, optional boolean removeDuplicateVertices);
+  void addTriangleNormals([Const, Ref] btVector3 vertex0, [Const, Ref] btVector3 vertex1, [Const, Ref] btVector3 vertex2, [Const, Ref] btVector3 normal0, [Const, Ref] btVector3 normal1, [Const, Ref] btVector3 normal2, optional boolean removeDuplicateVertices);
+  long findOrAddVertex([Const, Ref] btVector3 vertex, boolean removeDuplicateVertices);
+  void addIndex(long index);
+  attribute boolean	m_useTriangleNormals;
+ [Ref] btIndexedMeshArray getIndexedMeshArray();
+};
+btSmoothTriangleMesh implements btStridingMeshInterface;
+
+// Mackey Kinard (Babylon)
+interface btTriangleInfoMap {
+  void btTriangleInfoMap();
+};
 
 enum PHY_ScalarType {
     "PHY_FLOAT",
@@ -764,6 +784,10 @@ interface btDiscreteDynamicsWorld {
   void setContactAddedCallback(long funcpointer);
   void setContactProcessedCallback(long funcpointer);
   void setContactDestroyedCallback(long funcpointer);
+
+  // Mackey Kinard (Babylon)  
+  void generateInternalEdgeInfo(btBvhTriangleMeshShape trimeshShape, btTriangleInfoMap triangleInfoMap);
+  void adjustInternalEdgeContacts([Ref] btManifoldPoint cp, [Const] btCollisionObjectWrapper colObj0Wrap, [Const] btCollisionObjectWrapper colObj1Wrap, long partId0, long index0, long normalAdjustFlags);
 };
 btDiscreteDynamicsWorld implements btDynamicsWorld;
 
@@ -793,6 +817,18 @@ interface btDefaultVehicleRaycaster {
   void btDefaultVehicleRaycaster(btDynamicsWorld world);
 };
 btDefaultVehicleRaycaster implements btVehicleRaycaster;
+
+// Mackey Kinard (Babylon)
+interface btSmoothVehicleRaycaster {
+  void btSmoothVehicleRaycaster(btDynamicsWorld world);
+	attribute short	m_collisionFilterGroup;
+	attribute short	m_collisionFilterMask;
+	attribute boolean	m_interpolateNormals;
+  attribute boolean m_shapeTestingMode;
+  attribute float m_shapeTestingSize;
+	attribute long	m_testPointCount;
+};
+btSmoothVehicleRaycaster implements btVehicleRaycaster;
 
 [Prefix="btWheelInfo::"]
 interface RaycastInfo {
@@ -878,6 +914,9 @@ interface btKinematicCharacterController {
   void setUseGhostSweepTest (boolean useGhostObjectSweepTest);
   boolean onGround ();
   void setUpInterpolate (boolean value);
+  [Const] float getVerticalVelocity(); // Mackey Kinard (Babylon)
+	[Const] float getAddedMargin(); // Mackey Kinard (Babylon)
+	void setAddedMargin([Const] float margin); // Mackey Kinard (Babylon)
 };
 btKinematicCharacterController implements btActionInterface;
 
@@ -911,6 +950,12 @@ interface btRaycastVehicle {
   void setUserConstraintType(long userConstraintType);
   void setUserConstraintId(long uid);
   long getUserConstraintId();
+  attribute boolean m_enableMultiRaycast; // Mackey Kinard (Babylon)
+  attribute long m_minimumWheelContacts; // Mackey Kinard (Babylon)
+  attribute float m_trackConnectionAccel; // Mackey Kinard (Babylon)
+  attribute float m_smoothFlyingImpulse; // Mackey Kinard (Babylon)
+  attribute float m_stabilizingForce; // Mackey Kinard (Babylon)
+  attribute float m_maxImpulseForce; // Mackey Kinard (Babylon)
 };
 btRaycastVehicle implements btActionInterface;
 

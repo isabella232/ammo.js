@@ -31,6 +31,8 @@ struct InplaceSolverIslandCallback;
 
 #include "LinearMath/btAlignedObjectArray.h"
 
+// XXX EMSCRIPTEN: Fix internal edge support (Mackey Kinard)
+#include "BulletCollision/CollisionDispatch/btInternalEdgeUtility.h"
 
 ///btDiscreteDynamicsWorld provides discrete rigid body simulation
 ///those classes replace the obsolete CcdPhysicsEnvironment/CcdPhysicsController
@@ -239,7 +241,15 @@ public:
 	}
 	void setContactDestroyedCallback(unsigned long callbackFunction) {
 		gContactDestroyedCallback = (ContactDestroyedCallback)callbackFunction;
-	}	
+	}
+
+	// XXX EMSCRIPTEN: Fix internal edge support (Mackey Kinard)
+	void generateInternalEdgeInfo(btBvhTriangleMeshShape* trimeshShape, btTriangleInfoMap* triangleInfoMap) {
+		btGenerateInternalEdgeInfo(trimeshShape, triangleInfoMap);
+	}
+	void adjustInternalEdgeContacts(btManifoldPoint& cp, const btCollisionObjectWrapper* colObj0Wrap,const btCollisionObjectWrapper* colObj1Wrap, int partId0, int index0, int normalAdjustFlags) {
+		btAdjustInternalEdgeContacts(cp, colObj0Wrap, colObj1Wrap, partId0, index0, normalAdjustFlags);
+	}
 };
 
 #endif //BT_DISCRETE_DYNAMICS_WORLD_H

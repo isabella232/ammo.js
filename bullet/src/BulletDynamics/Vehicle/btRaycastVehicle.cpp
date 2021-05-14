@@ -24,6 +24,9 @@
 
 #define ROLLING_INFLUENCE_FIX
 
+#include "BulletCollision/CollisionShapes/btTriangleMesh.h" // Mackey Kinard
+#include "BulletCollision/CollisionShapes/btTriangleMeshShape.h" // Mackey Kinard
+#include "BulletCollision/CollisionShapes/btConvexHullShape.h" // Mackey Kinard
 
 btRigidBody& btActionInterface::getFixedBody()
 {
@@ -40,6 +43,15 @@ m_pitchControl(btScalar(0.))
 	m_indexRightAxis = 0;
 	m_indexUpAxis = 2;
 	m_indexForwardAxis = 1;
+
+	// Mackey Kinard
+	m_enableMultiRaycast = false;
+	m_minimumWheelContacts = 4;
+	m_trackConnectionAccel = btScalar(0.0);
+	m_smoothFlyingImpulse = btScalar(0.0);
+	m_stabilizingForce = btScalar(0.0);
+	m_maxImpulseForce = btScalar(0.0);
+
 	defaultInit(tuning);
 }
 
@@ -149,7 +161,8 @@ void btRaycastVehicle::resetSuspension()
 	}
 }
 
-void	btRaycastVehicle::updateWheelTransformsWS(btWheelInfo& wheel , bool interpolatedTransform)
+// Mackey Kinard (Note: Raycast Fraction - Helps Collision Mesh Gaps)
+void	btRaycastVehicle::updateWheelTransformsWS(btWheelInfo& wheel , bool interpolatedTransform, float raycastFraction)
 {
 	wheel.m_raycastInfo.m_isInContact = false;
 
@@ -159,14 +172,14 @@ void	btRaycastVehicle::updateWheelTransformsWS(btWheelInfo& wheel , bool interpo
 		getRigidBody()->getMotionState()->getWorldTransform(chassisTrans);
 	}
 
-	wheel.m_raycastInfo.m_hardPointWS = chassisTrans( wheel.m_chassisConnectionPointCS );
+	wheel.m_raycastInfo.m_hardPointWS = chassisTrans( wheel.m_chassisConnectionPointCS * raycastFraction );
 	wheel.m_raycastInfo.m_wheelDirectionWS = chassisTrans.getBasis() *  wheel.m_wheelDirectionCS ;
 	wheel.m_raycastInfo.m_wheelAxleWS = chassisTrans.getBasis() * wheel.m_wheelAxleCS;
 }
 
-btScalar btRaycastVehicle::rayCast(btWheelInfo& wheel)
+btScalar btRaycastVehicle::rayCast(btWheelInfo& wheel, float fraction)
 {
-	updateWheelTransformsWS( wheel,false);
+	updateWheelTransformsWS( wheel,false,fraction );
 
 	
 	btScalar depth = -1;
@@ -265,6 +278,10 @@ const btTransform& btRaycastVehicle::getChassisWorldTransform() const
 }
 
 
+////////////////////////////////////////////////////////////////////////////////////
+// Mackey Kinard - Advanced Raycast Vehicle Suspension Simulation
+////////////////////////////////////////////////////////////////////////////////////
+
 void btRaycastVehicle::updateVehicle( btScalar step )
 {
 	{
@@ -289,15 +306,70 @@ void btRaycastVehicle::updateVehicle( btScalar step )
 		m_currentVehicleSpeedKmHour *= btScalar(-1.);
 	}
 
-	//
-	// simulate suspension
-	//
-	
-	int i=0;
+	//////////////////////////////////////////
+	// LEGACY: simulate suspension
+	//////////////////////////////////////////
+	// int i=0;
+	// for (i=0;i<m_wheelInfo.size();i++)
+	// {
+	//	btScalar depth; 
+	//	depth = rayCast( m_wheelInfo[i]);
+	// }
+	//////////////////////////////////////////
+
+	// Mackey Kinard - Multi raycasting wheel on ground contact
+	// -------------------------------------------------------------
+	int i = 0, wheelsOnGround = 0;
 	for (i=0;i<m_wheelInfo.size();i++)
 	{
-		btScalar depth; 
-		depth = rayCast( m_wheelInfo[i]);
+		btScalar depth;
+		depth = rayCast(m_wheelInfo[i]);
+		if(m_wheelInfo[i].m_raycastInfo.m_isInContact)
+		{
+			wheelsOnGround++;
+		}
+		else
+		{
+	    	if (m_enableMultiRaycast == true)
+			{
+				// If the original raycast did not hit the ground,
+				// try a little bit (5%) closer to the centre of the chassis.
+				// Some tracks have very minor gaps that would otherwise
+				// trigger very odd physical behaviour.
+				depth = rayCast(m_wheelInfo[i], 0.95f);
+				if (m_wheelInfo[i].m_raycastInfo.m_isInContact)
+				{
+					wheelsOnGround++;
+				}
+			}
+		}
+	}
+
+	// Mackey Kinard - If the vehicle is flying, try to keep it parallel to the ground.
+	// -------------------------------------------------------------
+	if (wheelsOnGround == 0 && m_smoothFlyingImpulse > 0)
+	{
+		btVector3 vehicle_up    = getChassisWorldTransform().getBasis().getColumn(1);
+		btVector3 terrain_up = -m_chassisBody->getGravity();
+		terrain_up = terrain_up.normalize();
+
+		// Length of axis depends on the angle - i.e. the further awat
+		// the vehicle is from being upright, the larger the applied impulse
+		// will be, resulting in fast changes when the vehicle is on its
+		// side, but not overcompensating (and therefore shaking) when
+		// the vehicle is not much away from being upright.
+		btVector3 axis = vehicle_up.cross(terrain_up);
+
+		// To avoid the vehicle going backwards/forwards (or rolling sideways),
+		// set the pitch/roll to 0 before applying the 'straightening' impulse.
+		// TODO: make this works if gravity is changed.
+		btVector3 av = m_chassisBody->getAngularVelocity();
+		av.setX(0);
+		av.setZ(0);
+		m_chassisBody->setAngularVelocity(av);
+
+		// Give a nicely balanced feeling for rebalancing the vehicle
+		m_chassisBody->applyTorqueImpulse(axis * m_smoothFlyingImpulse);
 	}
 
 	updateSuspension(step);
@@ -321,10 +393,31 @@ void btRaycastVehicle::updateVehicle( btScalar step )
 	
 	}
 	
-
-	
 	updateFriction( step);
 
+	// Mackey Kinard - If configured, add a force to keep vehicles on the track
+	// -------------------------------------------------------------
+	if (m_stabilizingForce > 0 && m_minimumWheelContacts > 0 && wheelsOnGround >= m_minimumWheelContacts)
+	{
+		float rawSpeedFactor = getRigidBody()->getLinearVelocity().length();
+		float downImpluseFactor = fabsf(rawSpeedFactor) * m_stabilizingForce;
+		if (m_maxImpulseForce > 0 && downImpluseFactor > m_maxImpulseForce)
+		{
+			downImpluseFactor = m_maxImpulseForce;
+		}
+		btVector3 downImpulseVector = m_chassisBody->getWorldTransform().getBasis() * btVector3(0, -downImpluseFactor, 0);
+		m_chassisBody->applyCentralImpulse(downImpulseVector);
+	}
+
+ 	// TODO: Mackey Kinard - Apply additional impulse vector - ???
+	// -------------------------------------------------------------
+    //if (m_ticks_additional_impulse > 0)
+    //{
+    //    // We have fixed timestep
+    //    float dt = stk_config->ticks2Time(1);
+    //    m_chassisBody->applyCentralImpulse(m_additional_impulse * dt);
+    //    m_ticks_additional_impulse--;
+    //}
 	
 	for (i=0;i<m_wheelInfo.size();i++)
 	{
@@ -458,7 +551,27 @@ void	btRaycastVehicle::updateSuspension(btScalar deltaTime)
 		}
 		else
 		{
-			wheel_info.m_wheelsSuspensionForce = btScalar(0.0);
+			// LEGACY: wheel_info.m_wheelsSuspensionForce = btScalar(0.0);
+			// Mackey Kinard - Warning
+			// -------------------------------------------------------------
+			// A very unphysical thing to handle slopes that are a bit too
+            // steep or uneven (resulting in only one wheel on the ground)
+            // If only the front or only the rear wheels are on the ground, add
+            // a force pulling the axis down (towards the ground). Note that it
+            // is already guaranteed that either both or no wheels on one axis
+            // are on the ground, so we have to test only one of the wheels
+            // In hindsight it turns out that this code basically adds
+            // additional gravity when a kart is flying. So if this code would
+            // be removed some jumps (esp. Enterprise) do not work as expected anymore.
+			// -------------------------------------------------------------
+			if (m_trackConnectionAccel > 0)
+			{
+            	wheel_info.m_wheelsSuspensionForce = -m_trackConnectionAccel * chassisMass;
+			}
+			else
+			{
+				wheel_info.m_wheelsSuspensionForce = btScalar(0.0);
+			}
 		}
 	}
 
@@ -769,3 +882,121 @@ void* btDefaultVehicleRaycaster::castRay(const btVector3& from,const btVector3& 
 	return 0;
 }
 
+////////////////////////////////////////////////////
+// Mackey Kinard - Smooth Vehicle Raycaster
+////////////////////////////////////////////////////
+
+void* btSmoothVehicleRaycaster::castRay(const btVector3& from,const btVector3& to, btVehicleRaycasterResult& result)
+{
+	// DEPRECIATED: KEEP FOR REFERENCE
+	//if (this->m_shapeTestingMode == true)
+	//{
+	//	return this->performShapeTest(from, to, result);
+	//}
+	//else
+	//{
+		return this->performLineTest(from, to, result);
+	//}
+}
+
+void* btSmoothVehicleRaycaster::performLineTest(const btVector3& from,const btVector3& to, btVehicleRaycasterResult& result)
+{
+	SmoothRayCastResultCallback rayCallback(from, to);
+	rayCallback.m_collisionFilterMask = this->m_collisionFilterMask;
+	rayCallback.m_collisionFilterGroup = this->m_collisionFilterGroup;
+
+	// If this is a rigid body, m_collision_object is NULL, and the
+    // rigid body is the actual collision object.
+    // btCollisionWorld::rayTestSingle(from, to, m_collision_object ? m_collision_object : body, m_collision_shape, world_trans, ray_callback);
+	m_dynamicsWorld->rayTest(from, to, rayCallback);
+	if (rayCallback.hasHit())
+	{
+		const btRigidBody* body = btRigidBody::upcast(rayCallback.m_collisionObject);
+        if (body && body->hasContactResponse())
+		{
+			result.m_distFraction = rayCallback.m_closestHitFraction;
+			result.m_hitPointInWorld = rayCallback.m_hitPointWorld;
+			result.m_hitNormalInWorld = rayCallback.m_hitNormalWorld;
+			result.m_hitNormalInWorld.normalize();
+
+			if (this->m_interpolateNormals == true)
+			{
+				btCollisionShape* shape = (btCollisionShape*)body->getCollisionShape();
+				if (shape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE)
+				{
+					btTriangleMeshShape *mesh_shape = static_cast<btTriangleMeshShape *>(shape);
+					btStridingMeshInterface *mesh_interface = mesh_shape->getMeshInterface();
+					btSmoothTriangleMesh *mesh_smoothing = dynamic_cast<btSmoothTriangleMesh*>(mesh_interface);
+					if (mesh_smoothing != NULL && mesh_smoothing->hasVertexNormals())
+					{
+						//btVector3 n1 = btVector3(result.m_hitNormalInWorld.x(), result.m_hitNormalInWorld.y(), result.m_hitNormalInWorld.z());
+						result.m_hitNormalInWorld = mesh_smoothing->interpolateMeshNormal(body->getWorldTransform(), mesh_interface, rayCallback.m_shapePart, rayCallback.m_triangleIndex, rayCallback.m_hitPointWorld);
+						//btVector3 n2 = btVector3(result.m_hitNormalInWorld.x(), result.m_hitNormalInWorld.y(), result.m_hitNormalInWorld.z());
+						//printf("Perform Line Test - Hit Normal (%f x %f x %f) -> Bary Normal: (%f x %f x %f)\n", n1.x(), n1.y(), n1.z(), n2.x(), n2.y(), n2.z());
+					}
+				}
+			}
+			return (void*)body;
+		}
+	}
+	return 0;
+}
+
+void* btSmoothVehicleRaycaster::performShapeTest(const btVector3& from, const btVector3& to, btVehicleRaycasterResult& result)
+{
+	SmoothShapeCastResultCallback convexCallback(from, to);
+	convexCallback.m_collisionFilterMask = m_collisionFilterMask;
+	convexCallback.m_collisionFilterGroup = m_collisionFilterGroup;
+
+	btVector3 localFrom(0,0,0); // for convexSweepTest we need to have localized vectors
+	btVector3 localTo((to.x() - from.x()), (to.y() - from.y()), (to.z() - from.z()));
+	btTransform fromTransform, toTransform;
+	fromTransform.setIdentity();
+	fromTransform.setOrigin(localFrom);
+	toTransform.setIdentity();
+	toTransform.setOrigin(localTo);
+
+	btConvexHullShape convexHullShape; 
+	for (int i = 0; i < m_testPointCount; i++)
+	{
+		double angleRad = 360 / m_testPointCount * i * (M_PI / 180); // angle for each dot
+		float x = from.x() + (m_shapeTestingSize + 1e-3f) * cos(angleRad);
+		float y = from.y() + (m_shapeTestingSize + 1e-3f) * sin(angleRad) + m_shapeTestingSize * 2; // this modification is important 
+		float z = from.z() + (m_shapeTestingSize + 1e-3f) * cos(angleRad);
+		btVector3 point(x, y, z);
+		convexHullShape.addPoint(point);
+	}
+	convexHullShape.setMargin(m_shapeTestingSize);
+	m_dynamicsWorld->convexSweepTest(&convexHullShape, fromTransform, toTransform, convexCallback, this->m_sweepPenetration);
+	if (convexCallback.hasHit())
+	{
+		const btRigidBody* body = btRigidBody::upcast(convexCallback.m_hitCollisionObject);
+        if (body && body->hasContactResponse())
+		{
+			result.m_distFraction = convexCallback.m_closestHitFraction;
+			result.m_hitPointInWorld = convexCallback.m_hitPointWorld;
+			result.m_hitNormalInWorld = convexCallback.m_hitNormalWorld;
+			result.m_hitNormalInWorld.normalize();
+
+			if (this->m_interpolateNormals == true)
+			{
+				btCollisionShape* shape = (btCollisionShape*)body->getCollisionShape();
+				if (shape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE)
+				{
+					btTriangleMeshShape *mesh_shape = static_cast<btTriangleMeshShape *>(shape);
+					btStridingMeshInterface *mesh_interface = mesh_shape->getMeshInterface();
+					btSmoothTriangleMesh *mesh_smoothing = dynamic_cast<btSmoothTriangleMesh*>(mesh_interface);
+					if (mesh_smoothing != NULL && mesh_smoothing->hasVertexNormals())
+					{
+						//btVector3 n1 = btVector3(result.m_hitNormalInWorld.x(), result.m_hitNormalInWorld.y(), result.m_hitNormalInWorld.z());
+						result.m_hitNormalInWorld = mesh_smoothing->interpolateMeshNormal(body->getWorldTransform(), mesh_interface, convexCallback.m_shapePart, convexCallback.m_triangleIndex, convexCallback.m_hitPointWorld);
+						//btVector3 n2 = btVector3(result.m_hitNormalInWorld.x(), result.m_hitNormalInWorld.y(), result.m_hitNormalInWorld.z());
+						//printf("Perform Shape Test - Hit Normal (%f x %f x %f) -> Bary Normal: (%f x %f x %f)\n", n1.x(), n1.y(), n1.z(), n2.x(), n2.y(), n2.z());
+					}
+				}
+			}
+			return (void*)body;
+		}
+	}
+	return 0;
+}

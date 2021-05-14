@@ -165,6 +165,20 @@ public:
 
 	bool onGround () const;
 	void setUpInterpolate (bool value);
+
+	// XXX EMSCRIPTEN: Mackey Kinard
+	const btScalar getVerticalVelocity()
+	{
+		return m_verticalVelocity;
+	}
+	const btScalar getAddedMargin()
+	{
+		return m_addedMargin;
+	}
+	void setAddedMargin(const btScalar margin)
+	{
+		m_addedMargin = margin;
+	}
 };
 
 #endif // BT_KINEMATIC_CHARACTER_CONTROLLER_H

@@ -65,5 +65,62 @@ class btTriangleMesh : public btTriangleIndexVertexArray
 		
 };
 
+////////////////////////////////////////////
+// Mackey Kinard - BT SMOOTH TRIANGLE MESH
+////////////////////////////////////////////
+
+struct StrideVertexAccessor
+{
+	const unsigned char* base;
+	unsigned int stride;
+	
+	StrideVertexAccessor(const unsigned char* ptr, unsigned int stride, unsigned int offset)
+	: base(ptr + offset)
+	, stride(stride)
+	{
+	}
+	
+	btVector3 operator[](unsigned int i) const
+	{
+		return *(const btVector3*) (base + stride * i);
+	}
+};
+
+class btSmoothTriangleMesh : public btTriangleIndexVertexArray
+{
+public:
+
+	btSmoothTriangleMesh();
+
+	void    addTriangle(const btVector3& vertex0, const btVector3& vertex1, const btVector3& vertex2, bool removeDuplicateVertices = false);
+	void    addTriangleNormals(const btVector3& vertex0, const btVector3& vertex1, const btVector3& vertex2, const btVector3& normal0, const btVector3& normal1, const btVector3& normal2, bool removeDuplicateVertices = false);
+
+	virtual void    preallocateVertices(int numverts);
+	virtual void    preallocateIndices(int numindices);
+
+	int				findOrAddVertex(const btVector3& vertex, bool removeDuplicateVertices);
+	void			addIndex(int index);
+	int				getNumTriangles() const;
+
+	bool m_useTriangleNormals;
+
+	bool hasVertexNormals()
+	{
+		return (m_normals.size() > 0 && m_hasVertexNormals == true);
+	}
+	btVector3& getVertexNormal(int vertexIndex);
+	btVector3 getTriangleMeshNormal(const btTransform &transform, btStridingMeshInterface *mesh_interface, int subpart, int triangle);
+	btVector3 interpolateMeshNormal(const btTransform &transform, btStridingMeshInterface *mesh_interface, int subpart, int triangle, const btVector3 &position);
+	btVector3 barycentricCoordinates(const btVector3 &position, const btVector3 &p1, const btVector3 &p2, const btVector3 &p3);
+
+private:
+	btAlignedObjectArray<btScalar>			m_vertices;
+	btAlignedObjectArray<unsigned int>		m_indices;
+	btAlignedObjectArray<btVector3> 		m_normals;
+	bool m_hasVertexNormals;
+
+	btScalar        m_weldingThreshold;
+};
+
 #endif //BT_TRIANGLE_MESH_H
 

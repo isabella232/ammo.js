@@ -18,6 +18,12 @@ subject to the following restrictions:
 #include "BulletCollision/CollisionShapes/btTriangleShape.h"
 #include "BulletCollision/CollisionShapes/btSphereShape.h"
 
+// Mackey Kinard
+#include "BulletCollision/CollisionDispatch/btManifoldResult.h"
+#include "BulletCollision/CollisionDispatch/btCollisionObject.h"
+#include "BulletCollision/CollisionShapes/btTriangleShape.h"
+#include "BulletCollision/CollisionShapes/btTriangleMesh.h"
+#include "BulletCollision/CollisionShapes/btTriangleMeshShape.h"
 
 SphereTriangleDetector::SphereTriangleDetector(btSphereShape* sphere,btTriangleShape* triangle,btScalar contactBreakingThreshold)
 :m_sphere(sphere),
@@ -43,6 +49,54 @@ void	SphereTriangleDetector::getClosestPoints(const ClosestPointInput& input,Res
 
 	if (collide(sphereInTr.getOrigin(),point,normal,depth,timeOfImpact,m_contactBreakingThreshold))
 	{
+		//////////////////////////////////////////////////////////////////
+		// Mackey Kinard
+		//////////////////////////////////////////////////////////////////
+		// In some cases the normalInB is incorrect with a static triangle
+        // mesh (i.e. it's the connection point between puck and triangle, not
+        // the normal from the triangle - which is fine if the triangle mesh
+        // is a dynamic rigid body (i.e. can be pushed away), but appears to
+        // be wrong in case of a static body - it causes #2522 (puck suddenly
+        // pushed in air). So in case of a static triangle mesh, recompute
+        // the normal just based on the triangle mesh:
+        const btManifoldResult *mani = dynamic_cast<btManifoldResult*>(&output);
+        if (mani)
+        {
+			int part = -1;
+			int index = -1;
+			btTriangleMeshShape *tri = NULL;
+            const btCollisionObject *co = mani->getBody0Internal();
+			btCollisionShape* shape = (btCollisionShape*)co->getCollisionShape();
+			if (shape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE)
+			{
+				tri = static_cast<btTriangleMeshShape*>(shape);
+				part = mani->m_partId0;
+				index = mani->m_index0;
+			}
+			else
+			{
+                co  = mani->getBody1Internal();
+				shape = (btCollisionShape*)co->getCollisionShape();
+				if (shape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE)
+				{
+					tri = static_cast<btTriangleMeshShape*>(shape);
+					part = mani->m_partId1;
+					index = mani->m_index1;
+				}
+			}
+			if (tri != NULL && co->isStaticOrKinematicObject())
+			{
+				btStridingMeshInterface *mesh_interface = tri->getMeshInterface();
+				btSmoothTriangleMesh *mesh_smoothing = dynamic_cast<btSmoothTriangleMesh*>(mesh_interface);
+				if (mesh_smoothing != NULL && mesh_smoothing->m_useTriangleNormals == true && mesh_smoothing->hasVertexNormals())
+				{
+ 	    			//printf(">>> SPHERE-TRIANGLE - btSmoothTriangleMesh - Part: %d -> Index: %d\r\n", part, index);
+					normal = mesh_smoothing->getTriangleMeshNormal(co->getWorldTransform(), mesh_interface, part, index);
+                	// NOTE - ALREADY NORMALIZED: normal.normalize();
+				}
+			}
+        }
+
 		if (swapResults)
 		{
 			btVector3 normalOnB = transformB.getBasis()*normal;
