@@ -167,6 +167,7 @@ public:
 	void setUpInterpolate (bool value);
 
 	// XXX EMSCRIPTEN: Mackey Kinard
+	bool  m_useSlopeSlidePatch;
 	const btScalar getVerticalVelocity()
 	{
 		return m_verticalVelocity;

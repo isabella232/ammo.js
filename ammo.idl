@@ -917,6 +917,7 @@ interface btKinematicCharacterController {
   [Const] float getVerticalVelocity(); // Mackey Kinard (Babylon)
 	[Const] float getAddedMargin(); // Mackey Kinard (Babylon)
 	void setAddedMargin([Const] float margin); // Mackey Kinard (Babylon)
+  attribute boolean m_useSlopeSlidePatch; // Mackey Kinard (Babylon)
 };
 btKinematicCharacterController implements btActionInterface;
 

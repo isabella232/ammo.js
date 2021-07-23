@@ -152,6 +152,7 @@ btKinematicCharacterController::btKinematicCharacterController (btPairCachingGho
 	m_wasJumping = false;
 	m_interpolateUp = true;
 	setMaxSlope(btRadians(45.0));
+	m_useSlopeSlidePatch = false; // Mackey Kinard
 	m_currentStepOffset = 0;
 	full_drop = false;
 	bounce_fix = false;
@@ -224,7 +225,20 @@ bool btKinematicCharacterController::recoverFromPenetration ( btCollisionWorld* 
 						m_touchingNormal = pt.m_normalWorldOnB * directionSign;//??
 
 					}
-					m_currentPosition += pt.m_normalWorldOnB * directionSign * dist * btScalar(0.2);
+					// Mackey Kinard (Slope Slide Patch - Limit 60 Degrees)
+					if (this->m_useSlopeSlidePatch == true)
+					{
+						btVector3 offset = pt.m_normalWorldOnB * directionSign * dist * btScalar(0.2);
+						if (onGround()){
+							offset.setX(0);
+							offset.setZ(0);
+						}
+						m_currentPosition += offset;
+					}
+					else
+					{
+						m_currentPosition += pt.m_normalWorldOnB * directionSign * dist * btScalar(0.2);
+					}
 					penetration = true;
 				} else {
 					//printf("touching %f\n", dist);
